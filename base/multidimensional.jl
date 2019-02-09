@@ -340,25 +340,26 @@ module IteratorsMD
         iterfirst, iterfirst
     end
     @inline function iterate(iter::CartesianIndices, state)
-        # If we increment before the condition check, we run the
-        # risk of an integer overflow.
-        valid, I = inc(state.I, first(iter).I, last(iter).I)
-        valid || return nothing
-        nextstate = CartesianIndex(I)
-        return nextstate, nextstate
+        return inc((), state.I, first(iter).I, last(iter).I)
     end
 
     # increment & carry
-    @inline inc(::Tuple{}, ::Tuple{}, ::Tuple{}) = true, ()
-    @inline function inc(state::Tuple{Int}, start::Tuple{Int}, stop::Tuple{Int})
-        state[1] < stop[1], (state[1]+1,)
-    end
-    @inline function inc(state, start, stop)
+    # increment post check to avoid integer overflow
+    @inline inc(out, ::Tuple{}, ::Tuple{}, ::Tuple{}) = nothing
+    @inline function inc(out, state::Tuple{Int}, start::Tuple{Int}, stop::Tuple{Int})
         if state[1] < stop[1]
-            return true, (state[1]+1,tail(state)...)
+            nextstate = CartesianIndex(out..., state[1]+1)
+            return nextstate, nextstate
         end
-        valid, newtail = inc(tail(state), tail(start), tail(stop))
-        valid, (start[1], newtail...)
+        return nothing
+    end
+
+    @inline function inc(out, state, start, stop)
+        if state[1] < stop[1]
+            nextstate = CartesianIndex(out..., state[1]+1, tail(state)...)
+            return nextstate, nextstate
+        end
+        return inc((out..., start[1]), tail(state), tail(start), tail(stop))
     end
 
     # 0-d cartesian ranges are special-cased to iterate once and only once

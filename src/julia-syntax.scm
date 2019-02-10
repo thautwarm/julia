@@ -1567,11 +1567,10 @@
                        ;; TODO avoid `local declared twice` error from this
                        ;;,@(if outer `((local ,lhs)) '())
                        ,@(if outer `((require-existing-local ,lhs)) '())
-                       (if (call (top not_int) (call (core ===) ,next (null)))
-                           (_do_while
-			    (block ,body
-				   (= ,next (call (top iterate) ,coll ,state)))
-			    (call (top not_int) (call (core ===) ,next (null))))))))))))
+                       (_while
+                         (call (top not_int) (call (core ===), next (null)))
+                         (block ,body
+                                (= ,next (call (top iterate) ,coll ,state)))))))))))
 
 ;; wrap `expr` in a function appropriate for consuming values from given ranges
 (define (func-for-generator-ranges expr range-exprs flat outervars)

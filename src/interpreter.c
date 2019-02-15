@@ -318,7 +318,7 @@ SECT_INTERP static jl_value_t *do_call(jl_value_t **args, size_t nargs, interpre
     jl_value_t **argv;
     JL_GC_PUSHARGS(argv, nargs);
     size_t i;
-    for(i=0; i < nargs; i++)
+    for (i = 0; i < nargs; i++)
         argv[i] = eval_value(args[i], s);
     jl_value_t *result = jl_apply_generic(argv, nargs);
     JL_GC_POP();
@@ -334,7 +334,7 @@ SECT_INTERP static jl_value_t *do_invoke(jl_value_t **args, size_t nargs, interp
         argv[i - 1] = eval_value(args[i], s);
     jl_method_instance_t *meth = (jl_method_instance_t*)args[0];
     assert(jl_is_method_instance(meth));
-    jl_value_t *result = meth->invoke(meth, argv, nargs - 1);
+    jl_value_t *result = jl_invoke(meth, argv, nargs - 1);
     JL_GC_POP();
     return result;
 }
@@ -780,9 +780,8 @@ SECT_INTERP static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s
 
 jl_code_info_t *jl_code_for_interpreter(jl_method_instance_t *lam)
 {
-    jl_code_info_t *src = (jl_code_info_t*)lam->inferred;
-    JL_GC_PUSH1(&src);
-    if (jl_is_method(lam->def.method)) {
+    jl_code_info_t *src = (jl_code_info_t*)lam->uninferred;
+    if (jl_is_method(lam->def.value)) {
         if (!src || (jl_value_t*)src == jl_nothing) {
             if (lam->def.method->source) {
                 src = (jl_code_info_t*)lam->def.method->source;
@@ -793,13 +792,16 @@ jl_code_info_t *jl_code_for_interpreter(jl_method_instance_t *lam)
             }
         }
         if (src && (jl_value_t*)src != jl_nothing) {
-            src = jl_uncompress_ast(lam->def.method, (jl_array_t*)src);
+            JL_GC_PUSH1(&src);
+            src = jl_uncompress_ast(lam->def.method, NULL, (jl_array_t*)src);
+            lam->uninferred = (jl_value_t*)src;
+            jl_gc_wb(lam, src);
+            JL_GC_POP();
         }
     }
     if (!src || !jl_is_code_info(src)) {
         jl_error("source missing for method called in interpreter");
     }
-    JL_GC_POP();
     return src;
 }
 
@@ -817,8 +819,6 @@ SECT_INTERP CALLBACK_ABI void *jl_interpret_call_callback(interpreter_state *s, 
         (struct jl_interpret_call_args *)vargs;
     JL_GC_PROMISE_ROOTED(args);
     jl_code_info_t *src = jl_code_for_interpreter(args->lam);
-    args->lam->inferred = (jl_value_t*)src;
-    jl_gc_wb(args->lam, src);
 
     jl_array_t *stmts = src->code;
     assert(jl_typeis(stmts, jl_array_any_type));
@@ -856,9 +856,9 @@ SECT_INTERP CALLBACK_ABI void *jl_interpret_call_callback(interpreter_state *s, 
     return (void*)r;
 }
 
-SECT_INTERP jl_value_t *jl_fptr_interpret_call(jl_method_instance_t *lam, jl_value_t **args, uint32_t nargs)
+SECT_INTERP jl_value_t *jl_fptr_interpret_call(jl_lambda_t *lam, jl_value_t **args, uint32_t nargs)
 {
-    struct jl_interpret_call_args callback_args = { lam, args, nargs };
+    struct jl_interpret_call_args callback_args = { lam->def, args, nargs };
     return (jl_value_t*)enter_interpreter_frame(jl_interpret_call_callback, (void *)&callback_args);
 }
 

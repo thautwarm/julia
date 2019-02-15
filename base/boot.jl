@@ -442,7 +442,7 @@ Symbol(s::Symbol) = s
 
 # module providing the IR object model
 module IR
-export CodeInfo, MethodInstance, GotoNode,
+export CodeInfo, MethodInstance, Lambda, GotoNode,
     NewvarNode, SSAValue, Slot, SlotNumber, TypedSlot,
     PiNode, PhiNode, PhiCNode, UpsilonNode, LineInfoNode
 

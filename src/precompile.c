@@ -259,20 +259,20 @@ static void _compile_all_deq(jl_array_t *found)
             continue;
         mi = jl_get_unspecialized(mi);
         assert(mi == m->unspecialized); // make sure we didn't get tricked by a generated function, since we can't handle those
-        jl_lambda_t *ulinfo = jl_get_method_inferred(mi, (jl_value_t*)jl_any_type, 1, ~(size_t)0);
-        if (ulinfo->invoke != NULL)
+        jl_nativecode_t *ucache = jl_get_method_inferred(mi, (jl_value_t*)jl_any_type, 1, ~(size_t)0);
+        if (ucache->invoke != NULL)
             continue;
         src = m->source;
         // TODO: we could now enable storing inferred function pointers in the `unspecialized` cache
         //src = jl_type_infer(mi, jl_world_counter, 1);
-        //if (ulinfo->invoke != NULL)
+        //if (ucache->invoke != NULL)
         //    continue;
 
         // first try to create leaf signatures from the signature declaration and compile those
         _compile_all_union((jl_value_t*)ml->sig);
         // then also compile the generic fallback
         jl_compile_linfo(mi, (jl_code_info_t*)src, 1, &jl_default_cgparams);
-        assert(ulinfo->functionObjectsDecls.functionObject != NULL);
+        assert(ucache->functionObjectsDecls.functionObject != NULL);
     }
     JL_GC_POP();
     jl_printf(JL_STDERR, "\n");
@@ -329,16 +329,16 @@ static int precompile_enq_specialization_(jl_typemap_entry_t *l, void *closure)
 {
     jl_method_instance_t *mi = l->func.linfo;
     assert(jl_is_method_instance(mi));
-    jl_lambda_t *linfo = mi->cache;
-    while (linfo) {
+    jl_nativecode_t *ncode = mi->cache;
+    while (ncode) {
         int do_compile = 0;
-        if (linfo->functionObjectsDecls.functionObject == NULL && linfo->invoke != jl_fptr_const_return) {
-            if (linfo->inferred && linfo->inferred != jl_nothing &&
-                jl_ast_flag_inferred((jl_array_t*)linfo->inferred) &&
-                !jl_ast_flag_inlineable((jl_array_t*)linfo->inferred)) {
+        if (ncode->functionObjectsDecls.functionObject == NULL && ncode->invoke != jl_fptr_const_return) {
+            if (ncode->inferred && ncode->inferred != jl_nothing &&
+                jl_ast_flag_inferred((jl_array_t*)ncode->inferred) &&
+                !jl_ast_flag_inlineable((jl_array_t*)ncode->inferred)) {
                 do_compile = 1;
             }
-            else if (linfo->invoke != NULL) {
+            else if (ncode->invoke != NULL) {
                 do_compile = 1;
             }
         }
@@ -346,7 +346,7 @@ static int precompile_enq_specialization_(jl_typemap_entry_t *l, void *closure)
             jl_array_ptr_1d_push((jl_array_t*)closure, (jl_value_t*)mi);
             return 1;
         }
-        linfo = linfo->next;
+        ncode = ncode->next;
     }
     return 1;
 }
@@ -384,8 +384,8 @@ static void jl_compile_specializations(void)
     //jl_sort_types((jl_value_t**)jl_array_data(m), jl_array_len(m));
     size_t i, l = jl_array_len(m);
     for (i = 0; i < l; i++) {
-        jl_method_instance_t *linfo = (jl_method_instance_t*)jl_array_ptr_ref(m, i);
-        jl_compile_now(linfo);
+        jl_method_instance_t *mi = (jl_method_instance_t*)jl_array_ptr_ref(m, i);
+        jl_compile_now(mi);
     }
     JL_GC_POP();
 }

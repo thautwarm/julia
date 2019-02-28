@@ -307,7 +307,7 @@ static void ti_init_master_thread(void)
 }
 
 // all threads call this function to run user code
-static jl_value_t *ti_run_fun(jl_lambda_t *mfunc,
+static jl_value_t *ti_run_fun(jl_nativecode_t *mfunc,
                               jl_value_t **args, uint32_t nargs)
 {
     jl_ptls_t ptls = jl_get_ptls_states();
@@ -813,7 +813,7 @@ JL_DLLEXPORT jl_value_t *jl_threading_run(jl_value_t *_args)
                                                     jl_int32hash_fast(jl_return_address()),
                                                     jl_get_ptls_states()->world_age);
     size_t world = jl_get_ptls_states()->world_age;
-    jl_lambda_t *fptr = jl_compile_method_internal(mfunc, world);
+    jl_nativecode_t *fptr = jl_compile_method_internal(mfunc, world);
     if (fptr == jl_fptr_const_return)
         return jl_nothing;
     return ti_run_fun(fptr, args, nargs);

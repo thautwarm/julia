@@ -98,7 +98,7 @@ extern jl_array_t *jl_module_init_order;
 #define TAG_TVAR               25
 #define TAG_METHOD_INSTANCE    26
 #define TAG_METHOD             27
-#define TAG_LAMBDA             28
+#define TAG_NATIVECODE         28
 #define TAG_COMMONSYM          29
 #define TAG_NEARBYGLOBAL       30
 #define TAG_GLOBALREF          31
@@ -806,11 +806,11 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
     }
     else if (jl_is_method_instance(v)) {
         write_uint8(s->s, TAG_METHOD_INSTANCE);
-        jl_method_instance_t *li = (jl_method_instance_t*)v;
+        jl_method_instance_t *mi = (jl_method_instance_t*)v;
         int internal = 0;
-        if (!jl_is_method(li->def.method))
+        if (!jl_is_method(mi->def.method))
             internal = 1;
-        else if (module_in_worklist(li->def.method->module))
+        else if (module_in_worklist(mi->def.method->module))
             internal = 2;
         write_uint8(s->s, internal);
         if (!internal) {
@@ -820,16 +820,16 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
             *bp |= 1;
         }
         if (internal == 1)
-            jl_serialize_value(s, (jl_value_t*)li->uninferred);
-        jl_serialize_value(s, (jl_value_t*)li->specTypes);
+            jl_serialize_value(s, (jl_value_t*)mi->uninferred);
+        jl_serialize_value(s, (jl_value_t*)mi->specTypes);
         if (internal)
-            jl_serialize_value(s, li->def.value);
+            jl_serialize_value(s, mi->def.value);
         else
-            jl_serialize_value(s, (jl_value_t*)li->def.method->sig);
+            jl_serialize_value(s, (jl_value_t*)mi->def.method->sig);
         if (!internal)
             return;
-        jl_serialize_value(s, (jl_value_t*)li->sparam_vals);
-        jl_array_t *backedges = li->backedges;
+        jl_serialize_value(s, (jl_value_t*)mi->sparam_vals);
+        jl_array_t *backedges = mi->backedges;
         if (s->mode == MODE_MODULE && backedges) {
             // filter backedges to only contain pointers
             // to items that we will actually store (internal == 2)
@@ -848,21 +848,21 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         }
         jl_serialize_value(s, (jl_value_t*)backedges);
     }
-    else if (jl_is_lambda(v)) {
-        write_uint8(s->s, TAG_LAMBDA);
-        jl_lambda_t *li = (jl_lambda_t*)v;
+    else if (jl_is_nativecode(v)) {
+        write_uint8(s->s, TAG_NATIVECODE);
+        jl_nativecode_t *ncode = (jl_nativecode_t*)v;
         int validate = 0;
-        if (li->max_world == ~(size_t)0)
+        if (ncode->max_world == ~(size_t)0)
             validate = 1; // can check on deserialize if this cache entry is still valid
         int flags = validate << 0;
-        if (li->invoke == jl_fptr_const_return)
+        if (ncode->invoke == jl_fptr_const_return)
             flags |= 1 << 2;
         write_uint8(s->s, flags);
-        jl_serialize_value(s, (jl_value_t*)li->def);
-        if (validate || li->min_world == 0) {
-            jl_serialize_value(s, li->inferred);
-            jl_serialize_value(s, li->rettype_const);
-            jl_serialize_value(s, li->rettype);
+        jl_serialize_value(s, (jl_value_t*)ncode->def);
+        if (validate || ncode->min_world == 0) {
+            jl_serialize_value(s, ncode->inferred);
+            jl_serialize_value(s, ncode->rettype_const);
+            jl_serialize_value(s, ncode->rettype);
         }
         else {
             // skip storing useless data
@@ -870,7 +870,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
             jl_serialize_value(s, NULL);
             jl_serialize_value(s, jl_any_type);
         }
-        jl_serialize_value(s, li->next);
+        jl_serialize_value(s, ncode->next);
     }
     else if (jl_typeis(v, jl_module_type)) {
         jl_serialize_module(s, (jl_module_t*)v);
@@ -1695,65 +1695,65 @@ static jl_value_t *jl_deserialize_value_method(jl_serializer_state *s, jl_value_
 static jl_value_t *jl_deserialize_value_method_instance(jl_serializer_state *s, jl_value_t **loc) JL_GC_DISABLED
 {
     int usetable = (s->mode != MODE_IR);
-    jl_method_instance_t *li =
+    jl_method_instance_t *mi =
         (jl_method_instance_t*)jl_gc_alloc(s->ptls, sizeof(jl_method_instance_t),
                                        jl_method_instance_type);
-    memset(li, 0, sizeof(jl_method_instance_t));
+    memset(mi, 0, sizeof(jl_method_instance_t));
     uintptr_t pos = backref_list.len;
     if (usetable)
-        arraylist_push(&backref_list, li);
+        arraylist_push(&backref_list, mi);
     int internal = read_uint8(s->s);
-    li->specTypes = (jl_value_t*)jl_deserialize_value(s, (jl_value_t**)&li->specTypes);
-    jl_gc_wb(li, li->specTypes);
-    li->def.value = jl_deserialize_value(s, &li->def.value);
-    jl_gc_wb(li, li->def.value);
+    mi->specTypes = (jl_value_t*)jl_deserialize_value(s, (jl_value_t**)&mi->specTypes);
+    jl_gc_wb(mi, mi->specTypes);
+    mi->def.value = jl_deserialize_value(s, &mi->def.value);
+    jl_gc_wb(mi, mi->def.value);
 
     if (!internal) {
         assert(loc != NULL && loc != HT_NOTFOUND);
         arraylist_push(&flagref_list, loc);
         arraylist_push(&flagref_list, (void*)pos);
-        return (jl_value_t*)li;
+        return (jl_value_t*)mi;
     }
 
     if (internal == 1) {
-        li->uninferred = jl_deserialize_value(s, &li->uninferred);
-        jl_gc_wb(li, li->uninferred);
+        mi->uninferred = jl_deserialize_value(s, &mi->uninferred);
+        jl_gc_wb(mi, mi->uninferred);
     }
-    li->sparam_vals = (jl_svec_t*)jl_deserialize_value(s, (jl_value_t**)&li->sparam_vals);
-    jl_gc_wb(li, li->sparam_vals);
-    li->backedges = (jl_array_t*)jl_deserialize_value(s, (jl_value_t**)&li->backedges);
-    if (li->backedges)
-        jl_gc_wb(li, li->backedges);
-    return (jl_value_t*)li;
+    mi->sparam_vals = (jl_svec_t*)jl_deserialize_value(s, (jl_value_t**)&mi->sparam_vals);
+    jl_gc_wb(mi, mi->sparam_vals);
+    mi->backedges = (jl_array_t*)jl_deserialize_value(s, (jl_value_t**)&mi->backedges);
+    if (mi->backedges)
+        jl_gc_wb(mi, mi->backedges);
+    return (jl_value_t*)mi;
 }
 
-static jl_value_t *jl_deserialize_value_lambda(jl_serializer_state *s, jl_value_t **loc) JL_GC_DISABLED
+static jl_value_t *jl_deserialize_value_nativecode(jl_serializer_state *s, jl_value_t **loc) JL_GC_DISABLED
 {
     int usetable = (s->mode != MODE_IR);
-    jl_lambda_t *li =
-        (jl_lambda_t*)jl_gc_alloc(s->ptls, sizeof(jl_lambda_t), jl_lambda_type);
-    memset(li, 0, sizeof(jl_lambda_t));
+    jl_nativecode_t *ncode =
+        (jl_nativecode_t*)jl_gc_alloc(s->ptls, sizeof(jl_nativecode_t), jl_nativecode_type);
+    memset(ncode, 0, sizeof(jl_nativecode_t));
     if (usetable)
-        arraylist_push(&backref_list, li);
+        arraylist_push(&backref_list, ncode);
     int flags = read_uint8(s->s);
     int validate = (flags >> 0) & 3;
     int constret = (flags >> 2) & 1;
-    li->def = (jl_method_instance_t*)jl_deserialize_value(s, (jl_value_t**)&li->def);
-    jl_gc_wb(li, li->def);
-    li->inferred = jl_deserialize_value(s, &li->inferred);
-    jl_gc_wb(li, li->inferred);
-    li->rettype_const = jl_deserialize_value(s, &li->rettype_const);
-    if (li->rettype_const)
-        jl_gc_wb(li, li->rettype_const);
-    li->rettype = jl_deserialize_value(s, &li->rettype);
-    jl_gc_wb(li, li->rettype);
+    ncode->def = (jl_method_instance_t*)jl_deserialize_value(s, (jl_value_t**)&ncode->def);
+    jl_gc_wb(ncode, ncode->def);
+    ncode->inferred = jl_deserialize_value(s, &ncode->inferred);
+    jl_gc_wb(ncode, ncode->inferred);
+    ncode->rettype_const = jl_deserialize_value(s, &ncode->rettype_const);
+    if (ncode->rettype_const)
+        jl_gc_wb(ncode, ncode->rettype_const);
+    ncode->rettype = jl_deserialize_value(s, &ncode->rettype);
+    jl_gc_wb(ncode, ncode->rettype);
     if (constret)
-        li->invoke = jl_fptr_const_return;
-    li->next = (jl_lambda_t*)jl_deserialize_value(s, (jl_value_t**)&li->next);
-    jl_gc_wb(li, li->next);
+        ncode->invoke = jl_fptr_const_return;
+    ncode->next = (jl_nativecode_t*)jl_deserialize_value(s, (jl_value_t**)&ncode->next);
+    jl_gc_wb(ncode, ncode->next);
     if (validate)
-        li->min_world = jl_world_counter;
-    return (jl_value_t*)li;
+        ncode->min_world = jl_world_counter;
+    return (jl_value_t*)ncode;
 }
 
 static jl_value_t *jl_deserialize_value_module(jl_serializer_state *s) JL_GC_DISABLED
@@ -2080,8 +2080,8 @@ static jl_value_t *jl_deserialize_value(jl_serializer_state *s, jl_value_t **loc
         return jl_deserialize_value_method(s, loc);
     case TAG_METHOD_INSTANCE:
         return jl_deserialize_value_method_instance(s, loc);
-    case TAG_LAMBDA:
-        return jl_deserialize_value_lambda(s, loc);
+    case TAG_NATIVECODE:
+        return jl_deserialize_value_nativecode(s, loc);
     case TAG_MODULE:
         return jl_deserialize_value_module(s);
     case TAG_SHORTER_INT64:
@@ -2248,11 +2248,11 @@ static void jl_insert_backedges(jl_array_t *list, arraylist_t *dependent_worlds)
                 }
             }
             // then enable it
-            jl_lambda_t *linfo = caller->cache;
-            while (linfo) {
-                if (linfo->min_world > 0)
-                    linfo->max_world = ~(size_t)0;
-                linfo = linfo->next;
+            jl_nativecode_t *ncode = caller->cache;
+            while (ncode) {
+                if (ncode->min_world > 0)
+                    ncode->max_world = ~(size_t)0;
+                ncode = ncode->next;
             }
         }
         else {
@@ -2525,7 +2525,7 @@ JL_DLLEXPORT jl_array_t *jl_compress_ast(jl_method_t *m, jl_code_info_t *code)
     return v;
 }
 
-JL_DLLEXPORT jl_code_info_t *jl_uncompress_ast(jl_method_t *m, jl_lambda_t *metadata, jl_array_t *data)
+JL_DLLEXPORT jl_code_info_t *jl_uncompress_ast(jl_method_t *m, jl_nativecode_t *metadata, jl_array_t *data)
 {
     if (jl_is_code_info(data))
         return (jl_code_info_t*)data;
@@ -3050,22 +3050,22 @@ static jl_method_t *jl_recache_method(jl_method_t *m, size_t start, arraylist_t 
     return _new;
 }
 
-static jl_method_instance_t *jl_recache_method_instance(jl_method_instance_t *li, size_t start, arraylist_t *dependent_worlds)
+static jl_method_instance_t *jl_recache_method_instance(jl_method_instance_t *mi, size_t start, arraylist_t *dependent_worlds)
 {
-    jl_datatype_t *sig = (jl_datatype_t*)li->def.value;
+    jl_datatype_t *sig = (jl_datatype_t*)mi->def.value;
     assert(jl_is_datatype(sig) || jl_is_unionall(sig));
     jl_datatype_t *ftype = jl_first_argument_datatype((jl_value_t*)sig);
     jl_methtable_t *mt = ftype->name->mt;
     jl_method_t *m = jl_lookup_method_worldset(mt, sig, dependent_worlds);
-    jl_datatype_t *argtypes = (jl_datatype_t*)li->specTypes;
-    jl_set_typeof(li, (void*)(intptr_t)0x40); // invalidate the old value to help catch errors
+    jl_datatype_t *argtypes = (jl_datatype_t*)mi->specTypes;
+    jl_set_typeof(mi, (void*)(intptr_t)0x40); // invalidate the old value to help catch errors
     jl_svec_t *env = jl_emptysvec;
     jl_value_t *ti = jl_type_intersection_env((jl_value_t*)argtypes, (jl_value_t*)m->sig, &env);
     //assert(ti != jl_bottom_type); (void)ti;
     if (ti == jl_bottom_type)
         env = jl_emptysvec; // the intersection may fail now if the type system had made an incorrect subtype env in the past
     jl_method_instance_t *_new = jl_specializations_get_linfo(m, (jl_value_t*)argtypes, env);
-    jl_update_backref_list((jl_value_t*)li, (jl_value_t*)_new, start);
+    jl_update_backref_list((jl_value_t*)mi, (jl_value_t*)_new, start);
     return _new;
 }
 
@@ -3291,7 +3291,7 @@ void jl_init_serializer(void)
     deser_tag[TAG_TVAR] = (jl_value_t*)jl_tvar_type;
     deser_tag[TAG_METHOD_INSTANCE] = (jl_value_t*)jl_method_instance_type;
     deser_tag[TAG_METHOD] = (jl_value_t*)jl_method_type;
-    deser_tag[TAG_LAMBDA] = (jl_value_t*)jl_lambda_type;
+    deser_tag[TAG_NATIVECODE] = (jl_value_t*)jl_nativecode_type;
     deser_tag[TAG_GLOBALREF] = (jl_value_t*)jl_globalref_type;
     deser_tag[TAG_INT32] = (jl_value_t*)jl_int32_type;
     deser_tag[TAG_INT64] = (jl_value_t*)jl_int64_type;

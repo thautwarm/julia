@@ -81,7 +81,7 @@ end
 # MethodInstance/CodeInfo #
 ###########################
 
-function invoke_api(li::Lambda)
+function invoke_api(li::NativeCode)
     return ccall(:jl_invoke_api, Cint, (Any,), li)
 end
 
@@ -119,7 +119,7 @@ end
 function inf_for_methodinstance(mi::MethodInstance, min_world::UInt, max_world::UInt=min_world)
     inf = ccall(:jl_is_rettype_inferred, Ptr{Nothing}, (Any, UInt, UInt), mi, min_world, max_world)
     inf == C_NULL && return nothing
-    return unsafe_pointer_to_objref(inf)::Lambda
+    return unsafe_pointer_to_objref(inf)::NativeCode
 end
 
 

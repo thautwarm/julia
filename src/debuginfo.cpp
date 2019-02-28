@@ -68,7 +68,7 @@ struct ObjectInfo {
 // Maintain a mapping of unrealized function names -> linfo objects
 // so that when we see it get emitted, we can add a link back to the linfo
 // that it came from (providing name, type signature, file info, etc.)
-static StringMap<jl_lambda_t*> linfo_in_flight;
+static StringMap<jl_nativecode_t*> ncode_in_flight;
 static std::string mangle(const std::string &Name, const DataLayout &DL)
 {
     std::string MangledName;
@@ -78,9 +78,9 @@ static std::string mangle(const std::string &Name, const DataLayout &DL)
     }
     return MangledName;
 }
-void jl_add_linfo_in_flight(StringRef name, jl_lambda_t *linfo, const DataLayout &DL)
+void jl_add_code_in_flight(StringRef name, jl_nativecode_t *ncode, const DataLayout &DL)
 {
-    linfo_in_flight[mangle(name, DL)] = linfo;
+    ncode_in_flight[mangle(name, DL)] = ncode;
 }
 
 
@@ -183,7 +183,7 @@ public:
                                       RTDyldMemoryManager *memmgr)
     {
         jl_ptls_t ptls = jl_get_ptls_states();
-        // This function modify linfo->fptr in GC safe region.
+        // This function modify ncode->fptr in GC safe region.
         // This should be fine since the GC won't scan this field.
         int8_t gc_state = jl_gc_safe_enter(ptls);
         uv_rwlock_wrlock(&threadsafe);
@@ -320,8 +320,8 @@ public:
 #endif // defined(_OS_X86_64_)
 #endif // defined(_OS_WINDOWS_)
 
-        std::vector<std::pair<jl_lambda_t*, uintptr_t>> def_spec;
-        std::vector<std::pair<jl_lambda_t*, uintptr_t>> def_invoke;
+        std::vector<std::pair<jl_nativecode_t*, uintptr_t>> def_spec;
+        std::vector<std::pair<jl_nativecode_t*, uintptr_t>> def_invoke;
         auto symbols = object::computeSymbolSizes(debugObj);
         bool first = true;
         for (const auto &sym_size : symbols) {
@@ -357,28 +357,28 @@ public:
                    (uint8_t*)(uintptr_t)Addr, (size_t)Size, sName,
                    (uint8_t*)(uintptr_t)SectionLoadAddr, (size_t)SectionSize, UnwindData);
 #endif
-            StringMap<jl_lambda_t*>::iterator linfo_it = linfo_in_flight.find(sName);
-            jl_lambda_t *linfo = NULL;
-            if (linfo_it != linfo_in_flight.end()) {
-                linfo = linfo_it->second;
-                linfo_in_flight.erase(linfo_it);
-                const char *F = linfo->functionObjectsDecls.functionObject;
-                const char *specF = linfo->functionObjectsDecls.specFunctionObject;
-                if (linfo->invoke == NULL) {
+            StringMap<jl_nativecode_t*>::iterator linfo_it = ncode_in_flight.find(sName);
+            jl_nativecode_t *ncode = NULL;
+            if (linfo_it != ncode_in_flight.end()) {
+                ncode = linfo_it->second;
+                ncode_in_flight.erase(linfo_it);
+                const char *F = ncode->functionObjectsDecls.functionObject;
+                const char *specF = ncode->functionObjectsDecls.specFunctionObject;
+                if (ncode->invoke == NULL) {
                     if (specF && sName.equals(specF)) {
-                        def_spec.push_back({linfo, Addr});
+                        def_spec.push_back({ncode, Addr});
                         if (!strcmp(F, "jl_fptr_args"))
-                            def_invoke.push_back({linfo, (uintptr_t)&jl_fptr_args});
+                            def_invoke.push_back({ncode, (uintptr_t)&jl_fptr_args});
                         else if (!strcmp(F, "jl_fptr_sparam"))
-                            def_invoke.push_back({linfo, (uintptr_t)&jl_fptr_sparam});
+                            def_invoke.push_back({ncode, (uintptr_t)&jl_fptr_sparam});
                     }
                     else if (sName.equals(F)) {
-                        def_invoke.push_back({linfo, Addr});
+                        def_invoke.push_back({ncode, Addr});
                     }
                 }
             }
-            if (linfo)
-                linfomap[Addr] = std::make_pair(Size, linfo->def);
+            if (ncode)
+                linfomap[Addr] = std::make_pair(Size, ncode->def);
             if (first) {
                 ObjectInfo tmp = {&debugObj,
                     (size_t)SectionSize,

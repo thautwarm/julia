@@ -534,7 +534,7 @@ let
 
     Base.return_types(f18888, Tuple{})
     @test Core.Compiler.inf_for_methodinstance(mi, world) === mi.cache
-    @test mi.cache isa Core.Lambda
+    @test mi.cache isa Core.NativeCode
     @test !isdefined(mi.cache, :next)
 end
 

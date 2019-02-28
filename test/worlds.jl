@@ -177,8 +177,10 @@ z = Any["ABC"]
 f26506(x::Int) = 2
 g26506(z) # Places an entry for f26506(::String) in mt.name.cache
 f26506(x::String) = 3
-# The entry we created above should have been removed
-@test typeof(f26506).name.mt.cache === nothing
+let cache = typeof(f26506).name.mt.cache
+    # The entry we created above should have been truncated
+    @test cache.min_world == cache.max_world
+end
 c26506_1, c26506_2 = Condition(), Condition()
 # Captures the world age
 result26506 = Any[]
@@ -189,7 +191,10 @@ t = Task(()->begin
 end)
 yield(t)
 f26506(x::Float64) = 4
-@test typeof(f26506).name.mt.cache === nothing
+let cache = typeof(f26506).name.mt.cache
+    # The entry we created above should have been truncated
+    @test cache.min_world == cache.max_world
+end
 notify(c26506_1)
 wait(c26506_2)
 @test result26506[1] == 3

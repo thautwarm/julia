@@ -1225,7 +1225,7 @@ function find_inferred(mi::MethodInstance, @nospecialize(atypes), sv::Optimizati
     end
 
     linfo = inf_for_methodinstance(mi, sv.params.world)
-    if linfo isa Lambda
+    if linfo isa NativeCode
         if invoke_api(linfo) == 2
             # in this case function can be inlined to a constant
             return svec(true, quoted(linfo.rettype_const))

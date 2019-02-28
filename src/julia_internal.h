@@ -317,14 +317,14 @@ jl_value_t *jl_gc_realloc_string(jl_value_t *s, size_t sz);
 JL_DLLEXPORT void *jl_gc_counted_malloc(size_t sz);
 
 jl_code_info_t *jl_type_infer(jl_method_instance_t *li, size_t world, int force);
-jl_lambda_t *jl_compile_method_internal(jl_method_instance_t *meth, size_t world);
-void jl_generate_fptr(jl_lambda_t *li);
-jl_lambda_t *jl_compile_linfo(
+jl_nativecode_t *jl_compile_method_internal(jl_method_instance_t *meth, size_t world);
+void jl_generate_fptr(jl_nativecode_t *ncode);
+jl_nativecode_t *jl_compile_linfo(
         jl_method_instance_t *li,
         jl_code_info_t *src JL_MAYBE_UNROOTED,
         size_t world,
         const jl_cgparams_t *params);
-JL_DLLEXPORT jl_lambda_t *jl_get_method_inferred(
+JL_DLLEXPORT jl_nativecode_t *jl_get_method_inferred(
         jl_method_instance_t *mi, jl_value_t *rettype,
         size_t min_world, size_t max_world);
 jl_method_instance_t *jl_get_unspecialized(jl_method_instance_t *method);
@@ -578,7 +578,7 @@ JL_DLLEXPORT jl_methtable_t *jl_new_method_table(jl_sym_t *name, jl_module_t *mo
 jl_method_instance_t *jl_get_specialization1(jl_tupletype_t *types, size_t world, int mt_cache);
 JL_DLLEXPORT int jl_has_call_ambiguities(jl_value_t *types, jl_method_t *m);
 jl_method_instance_t *jl_get_specialized(jl_method_t *m, jl_value_t *types, jl_svec_t *sp);
-JL_DLLEXPORT jl_lambda_t *jl_is_rettype_inferred(jl_method_instance_t *li, size_t min_world, size_t max_world);
+JL_DLLEXPORT jl_nativecode_t *jl_is_rettype_inferred(jl_method_instance_t *li, size_t min_world, size_t max_world);
 JL_DLLEXPORT jl_value_t *jl_methtable_lookup(jl_methtable_t *mt, jl_value_t *type, size_t world);
 JL_DLLEXPORT jl_method_instance_t *jl_specializations_get_linfo(
     jl_method_t *m, jl_value_t *type, jl_svec_t *sparams);
@@ -586,7 +586,7 @@ JL_DLLEXPORT void jl_method_instance_add_backedge(jl_method_instance_t *callee, 
 JL_DLLEXPORT void jl_method_table_add_backedge(jl_methtable_t *mt, jl_value_t *typ, jl_value_t *caller);
 
 uint32_t jl_module_next_counter(jl_module_t *m);
-void jl_fptr_to_llvm(void *fptr, jl_lambda_t *lam, int spec_abi);
+void jl_fptr_to_llvm(void *fptr, jl_nativecode_t *ncode, int spec_abi);
 jl_tupletype_t *arg_type_tuple(jl_value_t **args, size_t nargs);
 
 int jl_has_meta(jl_array_t *body, jl_sym_t *sym);

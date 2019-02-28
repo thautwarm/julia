@@ -92,7 +92,7 @@ function cache_result(result::InferenceResult, min_valid::UInt, max_valid::UInt)
     # check if the existing linfo metadata is also sufficient to describe the current inference result
     # to decide if it is worth caching this
     already_inferred = !result.linfo.inInference
-    if inf_for_methodinstance(result.linfo, min_valid, max_valid) isa Lambda
+    if inf_for_methodinstance(result.linfo, min_valid, max_valid) isa NativeCode
         already_inferred = true
     end
 
@@ -132,7 +132,7 @@ function cache_result(result::InferenceResult, min_valid::UInt, max_valid::UInt)
         if !isa(inferred_result, Union{CodeInfo, Vector{UInt8}})
             inferred_result = nothing
         end
-        ccall(:jl_set_method_inferred, Ref{Lambda}, (Any, Any, Any, Any, Int32, UInt, UInt),
+        ccall(:jl_set_method_inferred, Ref{NativeCode}, (Any, Any, Any, Any, Int32, UInt, UInt),
             result.linfo, widenconst(result.result), rettype_const, inferred_result,
             const_flags, min_valid, max_valid)
     end
@@ -451,7 +451,7 @@ end
 function typeinf_edge(method::Method, @nospecialize(atypes), sparams::SimpleVector, caller::InferenceState)
     mi = specialize_method(method, atypes, sparams)::MethodInstance
     code = inf_for_methodinstance(mi, caller.params.world)
-    if code isa Lambda # return existing rettype if the code is already inferred
+    if code isa NativeCode # return existing rettype if the code is already inferred
         update_valid_age!(min_world(code), max_world(code), caller)
         if isdefined(code, :rettype_const)
             return Const(code.rettype_const), mi
@@ -522,10 +522,11 @@ function typeinf_ext(mi::MethodInstance, params::Params)
     for i = 1:2 # test-and-lock-and-test
         i == 2 && ccall(:jl_typeinf_begin, Cvoid, ())
         code = inf_for_methodinstance(mi, params.world)
-        if code isa Lambda
+        if code isa NativeCode
             # see if this code already exists in the cache
             inf = code.inferred
             if invoke_api(code) == 2
+                i == 2 && ccall(:jl_typeinf_end, Cvoid, ())
                 tree = ccall(:jl_new_code_info_uninit, Ref{CodeInfo}, ())
                 tree.code = Any[ Expr(:return, quoted(code.rettype_const)) ]
                 nargs = Int(method.nargs)
@@ -542,20 +543,21 @@ function typeinf_ext(mi::MethodInstance, params::Params)
                 tree.rettype = typeof(code.rettype_const)
                 tree.min_world = code.min_world
                 tree.max_world = code.max_world
-                i == 2 && ccall(:jl_typeinf_end, Cvoid, ())
                 return tree
             elseif isa(inf, CodeInfo)
                 i == 2 && ccall(:jl_typeinf_end, Cvoid, ())
-                inf.min_world = code.min_world
-                inf.min_world = code.min_world
-                inf.rettype = code.rettype
+                if !(inf.min_world == code.min_world &&
+                     inf.max_world == code.max_world &&
+                     inf.rettype === code.rettype)
+                    inf = copy(inf)
+                    inf.min_world = code.min_world
+                    inf.max_world = code.max_world
+                    inf.rettype = code.rettype
+                end
                 return inf
             elseif isa(inf, Vector{UInt8})
-                inf = _uncompressed_ast(code, inf)
                 i == 2 && ccall(:jl_typeinf_end, Cvoid, ())
-                inf.min_world = code.min_world
-                inf.min_world = code.min_world
-                inf.rettype = code.rettype
+                inf = _uncompressed_ast(code, inf)
                 return inf
             end
         end
@@ -578,7 +580,7 @@ function typeinf_type(method::Method, @nospecialize(atypes), sparams::SimpleVect
     for i = 1:2 # test-and-lock-and-test
         i == 2 && ccall(:jl_typeinf_begin, Cvoid, ())
         code = inf_for_methodinstance(mi, params.world)
-        if code isa Lambda
+        if code isa NativeCode
             # see if this rettype already exists in the cache
             i == 2 && ccall(:jl_typeinf_end, Cvoid, ())
             return code.rettype

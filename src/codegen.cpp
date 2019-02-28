@@ -1037,26 +1037,24 @@ static std::unique_ptr<Module> emit_function(
         size_t world,
         jl_llvm_functions_t *declarations,
         const jl_cgparams_t *params);
-void jl_add_linfo_in_flight(StringRef name, jl_lambda_t *linfo, const DataLayout &DL);
+void jl_add_code_in_flight(StringRef name, jl_nativecode_t *ncode, const DataLayout &DL);
 
-const char *name_from_method_instance(jl_method_instance_t *li)
+const char *name_from_method_instance(jl_method_instance_t *mi)
 {
-    return jl_is_method(li->def.method) ? jl_symbol_name(li->def.method->name) : "top-level scope";
+    return jl_is_method(mi->def.method) ? jl_symbol_name(mi->def.method->name) : "top-level scope";
 }
 
-// Use of `li` is not clobbered in JL_TRY
-JL_GCC_IGNORE_START("-Wclobbered")
 // this generates llvm code for the lambda info
 // and adds the result to the jitlayers
 // (and the shadow module), but doesn't yet compile
 // or generate object code for it
 extern "C"
-jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, size_t world, const jl_cgparams_t *params)
+jl_nativecode_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, size_t world, const jl_cgparams_t *params)
 {
     // N.B.: `src` may have not been rooted by the caller.
     JL_TIMING(CODEGEN);
     assert(jl_is_method_instance(mi));
-    jl_lambda_t *linfo = NULL;
+    jl_nativecode_t *ncode = NULL;
 
     if (params != &jl_default_cgparams /* fast path */ &&
         !compare_cgparams(params, &jl_default_cgparams) && params->cached)
@@ -1064,24 +1062,24 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
 
     // Fast path for the already-compiled case
     if (jl_is_method(mi->def.method)) {
-        linfo = mi->cache;
-        while (linfo) {
-            if (linfo->min_world <= world && world <= linfo->max_world) {
-                jl_llvm_functions_t decls = linfo->functionObjectsDecls;
+        ncode = mi->cache;
+        while (ncode) {
+            if (ncode->min_world <= world && world <= ncode->max_world) {
+                jl_llvm_functions_t decls = ncode->functionObjectsDecls;
                 bool already_compiled = params->cached && decls.functionObject != NULL;
                 if (!src) {
-                    if (already_compiled || linfo->invoke == jl_fptr_const_return)
-                        return linfo;
+                    if (already_compiled || ncode->invoke == jl_fptr_const_return)
+                        return ncode;
                 }
                 else if (already_compiled) {
-                    return linfo;
+                    return ncode;
                 }
             }
-            linfo = linfo->next;
+            ncode = ncode->next;
         }
     }
 
-    JL_GC_PUSH2(&src, &linfo);
+    JL_GC_PUSH2(&src, &ncode);
     JL_LOCK(&codegen_lock);
 
     // Codegen lock held in this block
@@ -1092,72 +1090,72 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
             src = (jl_code_info_t*)mi->uninferred;
             if (!src || !jl_is_code_info(src))
                 goto locked_out;
-            linfo = mi->cache;
-            while (linfo) {
-                jl_llvm_functions_t decls = linfo->functionObjectsDecls;
-                if (decls.functionObject != NULL || linfo->invoke == jl_fptr_const_return) {
+            ncode = mi->cache;
+            while (ncode) {
+                jl_llvm_functions_t decls = ncode->functionObjectsDecls;
+                if (decls.functionObject != NULL || ncode->invoke == jl_fptr_const_return) {
                     goto locked_out;
                 }
-                linfo = linfo->next;
+                ncode = ncode->next;
             }
         }
         else if (!src) {
             // If the caller didn't provide the source,
             // try to infer it for ourself, but first, repeat the search for it already compiled
             if (jl_is_method(mi->def.method)) {
-                linfo = mi->cache;
-                while (linfo) {
-                    if (linfo->min_world <= world && world <= linfo->max_world) {
-                        jl_llvm_functions_t decls = linfo->functionObjectsDecls;
+                ncode = mi->cache;
+                while (ncode) {
+                    if (ncode->min_world <= world && world <= ncode->max_world) {
+                        jl_llvm_functions_t decls = ncode->functionObjectsDecls;
                         bool already_compiled = params->cached && decls.functionObject != NULL;
                         if (!src) {
-                            if (already_compiled || linfo->invoke == jl_fptr_const_return)
+                            if (already_compiled || ncode->invoke == jl_fptr_const_return)
                                 goto locked_out;
                         }
                         else if (already_compiled) {
                             goto locked_out;
                         }
                     }
-                    linfo = linfo->next;
+                    ncode = ncode->next;
                 }
             }
 
             // see if it is inferred
-            linfo = mi->cache;
-            while (linfo) {
-                src = (jl_code_info_t*)linfo->inferred;
-                if (src && linfo->min_world <= world && world <= linfo->max_world) {
+            ncode = mi->cache;
+            while (ncode) {
+                src = (jl_code_info_t*)ncode->inferred;
+                if (src && ncode->min_world <= world && world <= ncode->max_world) {
                     break;
                 }
-                linfo = linfo->next;
+                ncode = ncode->next;
             }
-            if (!linfo) {
+            if (!ncode) {
                 // declare a failure to compile
                 goto locked_out;
             }
             // found inferred code, prep it for codegen
             if ((jl_value_t*)src != jl_nothing)
-                src = jl_uncompress_ast(mi->def.method, linfo, (jl_array_t*)src);
+                src = jl_uncompress_ast(mi->def.method, ncode, (jl_array_t*)src);
             if (!jl_is_code_info(src)) {
                 src = jl_type_infer(mi, world, 0);
                 if (!src)
                     goto locked_out;
-                linfo = jl_get_method_inferred(mi, src->rettype, src->min_world, src->max_world);
-                if (!linfo->inferred)
-                    linfo->inferred = jl_nothing;
+                ncode = jl_get_method_inferred(mi, src->rettype, src->min_world, src->max_world);
+                if (!ncode->inferred)
+                    ncode->inferred = jl_nothing;
             }
             // check again for recursion
-            jl_llvm_functions_t decls = linfo->functionObjectsDecls;
+            jl_llvm_functions_t decls = ncode->functionObjectsDecls;
             bool already_compiled = params->cached && decls.functionObject != NULL;
-            if (already_compiled || linfo->invoke == jl_fptr_const_return)
+            if (already_compiled || ncode->invoke == jl_fptr_const_return)
                 goto locked_out;
         }
         else {
             if (params->cached) {
-                linfo = mi->cache;
-                while (linfo) {
-                    if (linfo->min_world <= world && world <= linfo->max_world) {
-                        jl_llvm_functions_t decls = linfo->functionObjectsDecls;
+                ncode = mi->cache;
+                while (ncode) {
+                    if (ncode->min_world <= world && world <= ncode->max_world) {
+                        jl_llvm_functions_t decls = ncode->functionObjectsDecls;
                         bool already_compiled = params->cached && decls.functionObject != NULL;
                         if (already_compiled) {
                             // similar to above, but never returns a NULL
@@ -1165,7 +1163,7 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
                             goto locked_out;
                         }
                     }
-                    linfo = linfo->next;
+                    ncode = ncode->next;
                 }
             }
             assert((jl_value_t*)src != jl_nothing);
@@ -1173,28 +1171,28 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
         }
         assert(jl_is_code_info(src));
 
-        if (!linfo) {
-            linfo = jl_get_method_inferred(mi, src->rettype, src->min_world, src->max_world);
-            if (src->inferred && !linfo->inferred)
-                linfo->inferred = jl_nothing;
+        if (!ncode) {
+            ncode = jl_get_method_inferred(mi, src->rettype, src->min_world, src->max_world);
+            if (src->inferred && !ncode->inferred)
+                ncode->inferred = jl_nothing;
         }
         if (!params->cached) {
             // caller demanded that we make a new copy
             jl_ptls_t ptls = jl_get_ptls_states();
-            jl_lambda_t *uncached = (jl_lambda_t*)jl_gc_alloc(ptls, sizeof(jl_lambda_t),
-                    jl_lambda_type);
-            uncached->min_world = linfo->min_world;
-            uncached->max_world = linfo->max_world;
+            jl_nativecode_t *uncached = (jl_nativecode_t*)jl_gc_alloc(ptls, sizeof(jl_nativecode_t),
+                    jl_nativecode_type);
+            uncached->min_world = ncode->min_world;
+            uncached->max_world = ncode->max_world;
             uncached->functionObjectsDecls.functionObject = NULL;
             uncached->functionObjectsDecls.specFunctionObject = NULL;
-            uncached->rettype = linfo->rettype;
+            uncached->rettype = ncode->rettype;
             uncached->inferred = jl_nothing;
-            uncached->rettype_const = linfo->rettype_const;
+            uncached->rettype_const = ncode->rettype_const;
             uncached->invoke = NULL;
-            if (linfo->invoke == jl_fptr_const_return)
+            if (ncode->invoke == jl_fptr_const_return)
                 uncached->invoke = jl_fptr_const_return;
             uncached->specptr.fptr = NULL;
-            linfo = uncached;
+            ncode = uncached;
         }
 
         // Step 2: setup global state
@@ -1206,20 +1204,20 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
         // Step 3. actually do the work of emitting the function
         std::unique_ptr<Module> m;
         JL_TRY {
-            m = emit_function(mi, src, linfo->rettype, world, &linfo->functionObjectsDecls, params);
+            m = emit_function(mi, src, ncode->rettype, world, &ncode->functionObjectsDecls, params);
             //n_emit++;
         }
         JL_CATCH {
             // something failed! this is very bad, since other WIP may be pointing to this function
             // but there's not much we can do now. try to clear much of the WIP anyways.
-            linfo->functionObjectsDecls.functionObject = NULL;
-            linfo->functionObjectsDecls.specFunctionObject = NULL;
+            ncode->functionObjectsDecls.functionObject = NULL;
+            ncode->functionObjectsDecls.specFunctionObject = NULL;
             nested_compile = last_n_c;
             JL_UNLOCK(&codegen_lock); // Might GC
             const char *mname = name_from_method_instance(mi);
             jl_rethrow_with_add("error compiling %s", mname);
         }
-        jl_llvm_functions_t decls = linfo->functionObjectsDecls;
+        jl_llvm_functions_t decls = ncode->functionObjectsDecls;
         const char *f = decls.functionObject;
         const char *specf = decls.specFunctionObject;
 
@@ -1237,9 +1235,9 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
                 // they may not be rooted in the gc for the life of the program,
                 // and the runtime doesn't notify us when the code becomes unreachable :(
                 if (specf)
-                    jl_add_linfo_in_flight(specf, linfo, DL);
+                    jl_add_code_in_flight(specf, ncode, DL);
                 if (strcmp(f, "jl_fptr_args") && strcmp(f, "jl_fptr_sparam"))
-                    jl_add_linfo_in_flight(f, linfo, DL);
+                    jl_add_code_in_flight(f, ncode, DL);
             }
 
             // Step 5. Add the result to the execution engine now
@@ -1249,29 +1247,29 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
         if (// don't alter `inferred` when the code is not directly being used
             world &&
             // don't change inferred state
-            linfo->inferred) {
+            ncode->inferred) {
             if (// keep code when keeping everything
                 !(JL_DELETE_NON_INLINEABLE) ||
                 // aggressively keep code when debugging level >= 2
                 jl_options.debug_level > 1) {
                 // update the stored code
-                if (linfo->inferred != (jl_value_t*)src) {
+                if (ncode->inferred != (jl_value_t*)src) {
                     if (jl_is_method(mi->def.method))
                         src = (jl_code_info_t*)jl_compress_ast(mi->def.method, src);
-                    linfo->inferred = (jl_value_t*)src;
-                    jl_gc_wb(linfo, src);
+                    ncode->inferred = (jl_value_t*)src;
+                    jl_gc_wb(ncode, src);
                 }
             }
             else if (// don't delete toplevel code
                      jl_is_method(mi->def.method) &&
                      // and there is something to delete (test this before calling jl_ast_flag_inlineable)
-                     linfo->inferred != jl_nothing &&
+                     ncode->inferred != jl_nothing &&
                      // don't delete inlineable code, unless it is constant
-                     (linfo->invoke == jl_fptr_const_return || !jl_ast_flag_inlineable((jl_array_t*)linfo->inferred)) &&
+                     (ncode->invoke == jl_fptr_const_return || !jl_ast_flag_inlineable((jl_array_t*)ncode->inferred)) &&
                      // don't delete code when generating a precompile file
                      !imaging_mode) {
                 // if not inlineable, code won't be needed again
-                linfo->inferred = jl_nothing;
+                ncode->inferred = jl_nothing;
             }
         }
 
@@ -1293,14 +1291,13 @@ jl_lambda_t *jl_compile_linfo(jl_method_instance_t *mi, jl_code_info_t *src, siz
         last_time = this_time;
     }
     JL_GC_POP();
-    return linfo;
+    return ncode;
 
 locked_out:
     JL_UNLOCK(&codegen_lock);
     JL_GC_POP();
-    return linfo;
+    return ncode;
 }
-JL_GCC_IGNORE_STOP
 
 #define getModuleFlag(m,str) m->getModuleFlag(str)
 
@@ -1361,70 +1358,70 @@ uint64_t jl_get_llvm_fptr(void *function)
     return addr;
 }
 
-// this compiles li and sets `output->invoke`
+// this finishes compiling a native-code object and sets `output->invoke`
 extern "C"
-void jl_generate_fptr(jl_lambda_t *output)
+void jl_generate_fptr(jl_nativecode_t *output)
 {
-    jl_lambda_t *li = output;
+    jl_nativecode_t *ncode = output;
     jl_callptr_t fptr;
-    fptr = li->invoke;
+    fptr = ncode->invoke;
     if (fptr != NULL)
         return;
 
     JL_LOCK(&codegen_lock);
-    fptr = li->invoke;
+    fptr = ncode->invoke;
     if (fptr != NULL) {
         JL_UNLOCK(&codegen_lock);
         return;
     }
     jl_method_instance_t *unspec = NULL;
-    if (jl_is_method(li->def->def.method)) {
-        jl_llvm_functions_t decls = li->functionObjectsDecls;
+    if (jl_is_method(ncode->def->def.method)) {
+        jl_llvm_functions_t decls = ncode->functionObjectsDecls;
         const char *F = decls.functionObject;
         const char *specF = decls.specFunctionObject;
         if (!F || !jl_can_finalize_function(F) || (specF && !jl_can_finalize_function(specF))) {
             // can't compile F in the JIT right now,
             // so instead compile an unspecialized version
             // and return its fptr instead
-            if (li->def->def.method->unspecialized) {
-                unspec = li->def->def.method->unspecialized;
+            if (ncode->def->def.method->unspecialized) {
+                unspec = ncode->def->def.method->unspecialized;
             }
             if (!unspec)
-                unspec = jl_get_unspecialized(li->def); // get-or-create the unspecialized version to cache the result
+                unspec = jl_get_unspecialized(ncode->def); // get-or-create the unspecialized version to cache the result
             jl_code_info_t *src = (jl_code_info_t*)unspec->def.method->source;
             if (src == NULL) {
                 assert(unspec->def.method->generator);
                 src = jl_code_for_staged(unspec);
             }
-            jl_lambda_t *ulinfo = unspec->cache;
-            while (ulinfo) {
-                if (ulinfo->min_world <= output->min_world && output->max_world <= ulinfo->max_world && ulinfo->invoke != NULL)
+            jl_nativecode_t *ucache = unspec->cache;
+            while (ucache) {
+                if (ucache->min_world <= output->min_world && output->max_world <= ucache->max_world && ucache->invoke != NULL)
                     break;
-                ulinfo = ulinfo->next;
+                ucache = ucache->next;
             }
-            if (li->invoke)
+            if (ncode->invoke)
                 return;
-            if (ulinfo != NULL) {
-                li->specptr = ulinfo->specptr;
-                li->rettype_const = ulinfo->rettype_const;
-                if (li->rettype_const)
-                    jl_gc_wb(li, li->rettype_const);
-                li->invoke = ulinfo->invoke;
+            if (ucache != NULL) {
+                ncode->specptr = ucache->specptr;
+                ncode->rettype_const = ucache->rettype_const;
+                if (ncode->rettype_const)
+                    jl_gc_wb(ncode, ncode->rettype_const);
+                ncode->invoke = ucache->invoke;
                 JL_UNLOCK(&codegen_lock);
                 return;
             }
             assert(src);
-            ulinfo = jl_compile_linfo(unspec, src, li->def->def.method->primary_world, &jl_default_cgparams);
+            ucache = jl_compile_linfo(unspec, src, ncode->def->def.method->primary_world, &jl_default_cgparams);
             // if we hit a generated function, this might explode now, because
             // (unlike normal functions), any call to a generated function
             // in the compiler (Core or Core.Compiler) might cause us to die at any time
-            if (ulinfo == NULL)
+            if (ucache == NULL)
                 jl_error("Failed to handle @generated function in Core.Compiler module.");
-            li = ulinfo;
+            ncode = ucache;
         }
     }
 
-    jl_llvm_functions_t decls = li->functionObjectsDecls;
+    jl_llvm_functions_t decls = ncode->functionObjectsDecls;
     const char *F = decls.functionObject;
     const char *specF = decls.specFunctionObject;
     assert(F && jl_can_finalize_function(F));
@@ -1439,13 +1436,13 @@ void jl_generate_fptr(jl_lambda_t *output)
     void *specptr = (void*)(uintptr_t)getAddressForFunction(specF);
     assert(specptr != NULL);
     // the fptr should be cached somewhere also
-    if (li->invoke == NULL) {
-        li->specptr.fptr = specptr;
-        li->invoke = fptr;
+    if (ncode->invoke == NULL) {
+        ncode->specptr.fptr = specptr;
+        ncode->invoke = fptr;
     }
-    if (li != output && output->invoke == NULL) {
-        output->specptr = li->specptr;
-        output->rettype_const = li->rettype_const;
+    if (ncode != output && output->invoke == NULL) {
+        output->specptr = ncode->specptr;
+        output->rettype_const = ncode->rettype_const;
         if (output->rettype_const)
             jl_gc_wb(output, output->rettype_const);
         output->invoke = fptr;
@@ -1516,11 +1513,11 @@ void *jl_get_llvmf_defn(jl_method_instance_t *mi, size_t world, bool getwrapper,
     jl_value_t *jlrettype = (jl_value_t*)jl_any_type;
     jl_code_info_t *src = NULL;
     JL_GC_PUSH2(&src, &jlrettype);
-    if (jl_lambda_t *li = jl_is_rettype_inferred(mi, world, world)) {
-        src = (jl_code_info_t*)li->inferred;
+    if (jl_nativecode_t *ncode = jl_is_rettype_inferred(mi, world, world)) {
+        src = (jl_code_info_t*)ncode->inferred;
         if ((jl_value_t*)src != jl_nothing && !jl_is_code_info(src) && jl_is_method(mi->def.method))
-            src = jl_uncompress_ast(mi->def.method, li, (jl_array_t*)src);
-        jlrettype = li->rettype;
+            src = jl_uncompress_ast(mi->def.method, ncode, (jl_array_t*)src);
+        jlrettype = ncode->rettype;
     }
     if (!src || (jl_value_t*)src == jl_nothing) {
         src = jl_type_infer(mi, world, 0);
@@ -1570,19 +1567,19 @@ void *jl_get_llvmf_defn(jl_method_instance_t *mi, size_t world, bool getwrapper,
     assert(specf || f);
     // try to clone the name from some linfo, if it exists
     // to give the user a (false) sense of stability
-    jl_lambda_t *linfo = mi->cache;
-    while (linfo) {
-        specfname = linfo->functionObjectsDecls.specFunctionObject;
+    jl_nativecode_t *ncode = mi->cache;
+    while (ncode) {
+        specfname = ncode->functionObjectsDecls.specFunctionObject;
         if (specfname && specf) {
             specf->setName(specfname);
         }
-        fname = linfo->functionObjectsDecls.functionObject;
+        fname = ncode->functionObjectsDecls.functionObject;
         if (fname && f) {
             if (strcmp(fname, "jl_fptr_args") && strcmp(fname, "jl_fptr_sparam"))
                 f->setName(fname);
             break;
         }
-        linfo = linfo->next;
+        ncode = ncode->next;
     }
     m.release(); // the return object `llvmf` will be the owning pointer
     JL_UNLOCK(&codegen_lock); // Might GC
@@ -1607,13 +1604,13 @@ void *jl_get_llvmf_decl(jl_method_instance_t *mi, size_t world, bool getwrapper,
     jl_code_info_t *src = NULL;
     if (!jl_is_rettype_inferred(mi, world, world))
         src = jl_type_infer(mi, world, 0);
-    jl_lambda_t *linfo = jl_compile_linfo(mi, src, world, &params);
-    if (linfo == NULL)
+    jl_nativecode_t *ncode = jl_compile_linfo(mi, src, world, &params);
+    if (ncode == NULL)
         // internal error
         return NULL;
 
-    const jl_llvm_functions_t &decls = linfo->functionObjectsDecls;
-    if (decls.functionObject == NULL && linfo->invoke == jl_fptr_const_return && jl_is_method(mi->def.method)) {
+    const jl_llvm_functions_t &decls = ncode->functionObjectsDecls;
+    if (decls.functionObject == NULL && ncode->invoke == jl_fptr_const_return && jl_is_method(mi->def.method)) {
         // normally we don't generate native code for these functions, so need an exception here
         // This leaks a bit of memory to cache native code that we'll never actually need
         JL_LOCK(&codegen_lock);
@@ -1622,8 +1619,8 @@ void *jl_get_llvmf_decl(jl_method_instance_t *mi, size_t world, bool getwrapper,
                 src = jl_type_infer(mi, world, 0);
             if (src == NULL)
                 src = mi->def.method->generator ? jl_code_for_staged(mi) : (jl_code_info_t*)mi->def.method->source;
-            linfo = jl_compile_linfo(mi, src, world, &params);
-            if (linfo == NULL)
+            ncode = jl_compile_linfo(mi, src, world, &params);
+            if (ncode == NULL)
                 // internal error
                 return NULL;
         }
@@ -1644,7 +1641,7 @@ void *jl_get_llvmf_decl(jl_method_instance_t *mi, size_t world, bool getwrapper,
             return f;
         }
         else {
-            jl_returninfo_t returninfo = get_specsig_function(NULL, decls.specFunctionObject, mi->specTypes, linfo->rettype);
+            jl_returninfo_t returninfo = get_specsig_function(NULL, decls.specFunctionObject, mi->specTypes, ncode->rettype);
             return returninfo.decl;
         }
     }
@@ -3063,12 +3060,12 @@ static Value *emit_jlcall(jl_codectx_t &ctx, Value *theFptr, Value *theF,
 }
 
 
-static jl_cgval_t emit_call_specfun_other(jl_codectx_t &ctx, jl_lambda_t *li, StringRef specFunctionObject,
+static jl_cgval_t emit_call_specfun_other(jl_codectx_t &ctx, jl_nativecode_t *ncode, StringRef specFunctionObject,
                                           jl_cgval_t *argv, size_t nargs, jl_value_t *inferred_retty)
 {
     // emit specialized call site
-    jl_value_t *jlretty = li->rettype;
-    jl_returninfo_t returninfo = get_specsig_function(jl_Module, specFunctionObject, li->def->specTypes, jlretty);
+    jl_value_t *jlretty = ncode->rettype;
+    jl_returninfo_t returninfo = get_specsig_function(jl_Module, specFunctionObject, ncode->def->specTypes, jlretty);
     FunctionType *cft = returninfo.decl->getFunctionType();
 
     size_t nfargs = cft->getNumParams();
@@ -3095,7 +3092,7 @@ static jl_cgval_t emit_call_specfun_other(jl_codectx_t &ctx, jl_lambda_t *li, St
     }
 
     for (size_t i = 0; i < nargs; i++) {
-        jl_value_t *jt = jl_nth_slot_type(li->def->specTypes, i);
+        jl_value_t *jt = jl_nth_slot_type(ncode->def->specTypes, i);
         bool isboxed;
         Type *et = julia_type_to_llvm(jt, &isboxed);
         if (type_is_ghost(et))
@@ -3206,12 +3203,12 @@ static jl_cgval_t emit_invoke(jl_codectx_t &ctx, jl_expr_t *ex, jl_value_t *rt)
     if (lival.constant) {
         jl_method_instance_t *mi = (jl_method_instance_t*)lival.constant;
         assert(jl_is_method_instance(mi));
-        jl_lambda_t *linfo = jl_compile_linfo(mi, NULL, ctx.world, ctx.params);
-        if (linfo && linfo->inferred) {
-            const jl_llvm_functions_t &decls = linfo->functionObjectsDecls;
-            if (linfo->invoke == jl_fptr_const_return) {
-                assert(linfo->rettype_const);
-                return mark_julia_const(linfo->rettype_const);
+        jl_nativecode_t *ncode = jl_compile_linfo(mi, NULL, ctx.world, ctx.params);
+        if (ncode && ncode->inferred) {
+            const jl_llvm_functions_t &decls = ncode->functionObjectsDecls;
+            if (ncode->invoke == jl_fptr_const_return) {
+                assert(ncode->rettype_const);
+                return mark_julia_const(ncode->rettype_const);
             }
             if (decls.functionObject) {
                 if (!strcmp(decls.functionObject, "jl_fptr_args")) {
@@ -3219,7 +3216,7 @@ static jl_cgval_t emit_invoke(jl_codectx_t &ctx, jl_expr_t *ex, jl_value_t *rt)
                     handled = true;
                 }
                 else if (!!strcmp(decls.functionObject, "jl_fptr_sparam")) {
-                    result = emit_call_specfun_other(ctx, linfo, decls.specFunctionObject, argv, nargs, rt);
+                    result = emit_call_specfun_other(ctx, ncode, decls.specFunctionObject, argv, nargs, rt);
                     handled = true;
                 }
             }
@@ -4281,9 +4278,9 @@ static void emit_last_age_field(jl_codectx_t &ctx)
 
 static void emit_cfunc_invalidate(
         Function *gf_thunk, jl_returninfo_t::CallingConv cc,
-        jl_lambda_t *linfo, size_t nargs, size_t world)
+        jl_nativecode_t *ncode, size_t nargs, size_t world)
 {
-    jl_method_instance_t *lam = linfo->def;
+    jl_method_instance_t *lam = ncode->def;
     jl_codectx_t ctx(jl_LLVMContext);
     ctx.f = gf_thunk;
     ctx.world = world;
@@ -4328,7 +4325,7 @@ static void emit_cfunc_invalidate(
     assert(AI == gf_thunk->arg_end());
     Value *gf_ret = emit_jlcall(ctx, jlapplygeneric_func, NULL, myargs, nargs);
     jl_cgval_t gf_retbox = mark_julia_type(ctx, gf_ret, true, jl_any_type);
-    jl_value_t *astrt = linfo->rettype;
+    jl_value_t *astrt = ncode->rettype;
     if (cc != jl_returninfo_t::Boxed) {
         emit_typecheck(ctx, gf_retbox, astrt, "cfunction");
     }
@@ -4384,25 +4381,25 @@ static Function* gen_cfun_wrapper(
     bool nest = (!ff || unionall_env);
     // try to look up this function for direct invoking
     jl_method_instance_t *lam = sigt ? jl_get_specialization1((jl_tupletype_t*)sigt, world, 1) : NULL;
-    jl_lambda_t *linfo = NULL;
+    jl_nativecode_t *ncode = NULL;
     jl_value_t *astrt = (jl_value_t*)jl_any_type;
     // infer it first, if necessary
     if (lam) {
         name = jl_symbol_name(lam->def.method->name);
         jl_code_info_t *src = NULL;
-        linfo = jl_is_rettype_inferred(lam, world, world);
-        if (!into && linfo == NULL) // TODO: this isn't ideal to be unconditionally calling type inference from here
+        ncode = jl_is_rettype_inferred(lam, world, world);
+        if (!into && ncode == NULL) // TODO: this isn't ideal to be unconditionally calling type inference from here
             src = jl_type_infer(lam, world, 0);
-        linfo = jl_compile_linfo(lam, src, world, &jl_default_cgparams);
-        if (linfo) {
-            if (!linfo->inferred ||
-                    linfo->functionObjectsDecls.specFunctionObject == NULL ||
-                    !strcmp(linfo->functionObjectsDecls.specFunctionObject, "jl_fptr_sparam")) {
-                linfo = NULL; // TODO: use emit_invoke framework to dispatch these
+        ncode = jl_compile_linfo(lam, src, world, &jl_default_cgparams);
+        if (ncode) {
+            if (!ncode->inferred ||
+                    ncode->functionObjectsDecls.specFunctionObject == NULL ||
+                    !strcmp(ncode->functionObjectsDecls.specFunctionObject, "jl_fptr_sparam")) {
+                ncode = NULL; // TODO: use emit_invoke framework to dispatch these
             }
         }
-        if (linfo) {
-            astrt = linfo->rettype;
+        if (ncode) {
+            astrt = ncode->rettype;
             if (astrt != (jl_value_t*)jl_bottom_type &&
                 jl_type_intersection(astrt, declrt) == jl_bottom_type) {
                 // Do not warn if the function does not return since it is
@@ -4492,8 +4489,8 @@ static Function* gen_cfun_wrapper(
                 T_size,
                 ctx.builder.CreateConstInBoundsGEP1_32(
                     T_size,
-                    emit_bitcast(ctx, literal_pointer_val(ctx, (jl_value_t*)linfo), T_psize),
-                    offsetof(jl_lambda_t, max_world) / sizeof(size_t)));
+                    emit_bitcast(ctx, literal_pointer_val(ctx, (jl_value_t*)ncode), T_psize),
+                    offsetof(jl_nativecode_t, max_world) / sizeof(size_t)));
         // XXX: age is always OK if we don't have a TLS. This is a hack required due to `@threadcall` abuse.
         // and adds quite a bit of complexity here, even though it's still wrong
         // (anything that tries to interact with the runtime will fault)
@@ -4658,20 +4655,20 @@ static Function* gen_cfun_wrapper(
     // Create the call
     bool jlfunc_sret;
     jl_cgval_t retval;
-    if (linfo && linfo->invoke == jl_fptr_const_return) {
+    if (ncode && ncode->invoke == jl_fptr_const_return) {
         nargs = 0; // arguments not needed -- TODO: not really true, should emit an age_ok test and jlcall
         jlfunc_sret = false;
-        retval = mark_julia_const(linfo->rettype_const);
+        retval = mark_julia_const(ncode->rettype_const);
     }
-    else if (!linfo || !linfo->functionObjectsDecls.functionObject ||
-            !strcmp(linfo->functionObjectsDecls.functionObject, "jl_fptr_args") ||
-            !strcmp(linfo->functionObjectsDecls.functionObject, "jl_fptr_sparam")) {
+    else if (!ncode || !ncode->functionObjectsDecls.functionObject ||
+            !strcmp(ncode->functionObjectsDecls.functionObject, "jl_fptr_args") ||
+            !strcmp(ncode->functionObjectsDecls.functionObject, "jl_fptr_sparam")) {
         // emit a jlcall
         jlfunc_sret = false;
         Function *theFptr = NULL;
-        if (linfo && linfo->functionObjectsDecls.functionObject) {
-            if (!strcmp(linfo->functionObjectsDecls.functionObject, "jl_fptr_args")) {
-                const char *fname = linfo->functionObjectsDecls.specFunctionObject;
+        if (ncode && ncode->functionObjectsDecls.functionObject) {
+            if (!strcmp(ncode->functionObjectsDecls.functionObject, "jl_fptr_args")) {
+                const char *fname = ncode->functionObjectsDecls.specFunctionObject;
                 theFptr = cast_or_null<Function>(jl_Module->getNamedValue(fname));
                 if (!theFptr) {
                     theFptr = Function::Create(jl_func_sig, GlobalVariable::ExternalLinkage,
@@ -4713,8 +4710,8 @@ static Function* gen_cfun_wrapper(
     }
     else {
         // emit a specsig call
-        const char *protoname = linfo->functionObjectsDecls.specFunctionObject;
-        jl_returninfo_t returninfo = get_specsig_function(M, protoname, lam->specTypes, linfo->rettype);
+        const char *protoname = ncode->functionObjectsDecls.specFunctionObject;
+        jl_returninfo_t returninfo = get_specsig_function(M, protoname, lam->specTypes, ncode->rettype);
         FunctionType *cft = returninfo.decl->getFunctionType();
         jlfunc_sret = (returninfo.cc == jl_returninfo_t::SRet);
 
@@ -4768,7 +4765,7 @@ static Function* gen_cfun_wrapper(
             // build a  specsig -> jl_apply_generic converter thunk
             // this builds a method that calls jl_apply_generic (as a closure over a singleton function pointer),
             // but which has the signature of a specsig
-            emit_cfunc_invalidate(gf_thunk, returninfo.cc, linfo, nargs + 1, world);
+            emit_cfunc_invalidate(gf_thunk, returninfo.cc, ncode, nargs + 1, world);
             theFptr = ctx.builder.CreateSelect(age_ok, theFptr, gf_thunk);
         }
         CallInst *call = ctx.builder.CreateCall(theFptr, ArrayRef<Value*>(args));
@@ -6819,7 +6816,7 @@ static GlobalVariable *julia_const_gv(jl_value_t *val)
 }
 
 // TODO: do this lazily
-extern "C" void jl_fptr_to_llvm(void *fptr, jl_lambda_t *lam, int specsig)
+extern "C" void jl_fptr_to_llvm(void *fptr, jl_nativecode_t *lam, int specsig)
 {
     if (!imaging_mode) { // in imaging mode, it's fine to use the fptr, but we don't want it in the shadow_module
         // this assigns a function pointer (from loading the system image), to the function object

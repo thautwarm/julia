@@ -673,9 +673,9 @@ static void jl_write_values(jl_serializer_state *s)
             if (jl_is_method(v)) {
                 write_padding(s->s, sizeof(jl_method_t) - tot);
             }
-            else if (jl_is_lambda(v)) {
-                jl_lambda_t *m = (jl_lambda_t*)v;
-                jl_lambda_t *newm = (jl_lambda_t*)&s->s->buf[reloc_offset];
+            else if (jl_is_nativecode(v)) {
+                jl_nativecode_t *m = (jl_nativecode_t*)v;
+                jl_nativecode_t *newm = (jl_nativecode_t*)&s->s->buf[reloc_offset];
 
                 newm->invoke = NULL;
                 newm->specptr.fptr = NULL;
@@ -728,11 +728,11 @@ static void jl_write_values(jl_serializer_state *s)
                 }
                 newm->invoke = NULL; // relocation offset
                 if (fptr_id != JL_API_NULL) {
-                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_lambda_t, invoke))); // relocation location
+                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_nativecode_t, invoke))); // relocation location
                     arraylist_push(&s->relocs_list, (void*)(((uintptr_t)FunctionRef << RELOC_TAG_OFFSET) + fptr_id)); // relocation target
                 }
                 if (specfptr_id >= 2) {
-                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_lambda_t, specptr.fptr))); // relocation location
+                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_nativecode_t, specptr.fptr))); // relocation location
                     arraylist_push(&s->relocs_list, (void*)(((uintptr_t)BuiltinFunctionRef << RELOC_TAG_OFFSET) + specfptr_id - 2)); // relocation target
                 }
             }
@@ -1025,11 +1025,11 @@ static void jl_update_all_fptrs(jl_serializer_state *s)
                 specfunc = 0;
                 offset = ~offset;
             }
-            jl_lambda_t *li = (jl_lambda_t*)(base + offset);
+            jl_nativecode_t *ncode = (jl_nativecode_t*)(base + offset);
             uintptr_t base = (uintptr_t)fvars.base;
-            assert(jl_is_method(li->def->def.method) && li->invoke != jl_fptr_const_return);
-            assert(specfunc ? li->invoke != NULL : li->invoke == NULL);
-            linfos[i] = li->def;
+            assert(jl_is_method(ncode->def->def.method) && ncode->invoke != jl_fptr_const_return);
+            assert(specfunc ? ncode->invoke != NULL : ncode->invoke == NULL);
+            linfos[i] = ncode->def;
             int32_t offset = fvars.offsets[i];
             for (; clone_idx < fvars.nclones; clone_idx++) {
                 uint32_t idx = fvars.clone_idxs[clone_idx] & jl_sysimg_val_mask;
@@ -1041,10 +1041,10 @@ static void jl_update_all_fptrs(jl_serializer_state *s)
             }
             void *fptr = (void*)(base + offset);
             if (specfunc)
-                li->specptr.fptr = fptr;
+                ncode->specptr.fptr = fptr;
             else
-                li->invoke = (jl_callptr_t)fptr;
-            jl_fptr_to_llvm(fptr, li, specfunc);
+                ncode->invoke = (jl_callptr_t)fptr;
+            jl_fptr_to_llvm(fptr, ncode, specfunc);
         }
     }
     jl_register_fptrs(sysimage_base, &fvars, linfos, sysimg_fvars_max);
@@ -1630,7 +1630,7 @@ static void jl_init_serializer2(int for_serialize)
                      jl_symbol_type, jl_ssavalue_type, jl_datatype_type, jl_slotnumber_type,
                      jl_simplevector_type, jl_array_type, jl_typedslot_type,
                      jl_expr_type, jl_globalref_type, jl_string_type,
-                     jl_module_type, jl_tvar_type, jl_method_instance_type, jl_method_type, jl_lambda_type,
+                     jl_module_type, jl_tvar_type, jl_method_instance_type, jl_method_type, jl_nativecode_type,
                      jl_emptysvec, jl_emptytuple, jl_false, jl_true, jl_nothing, jl_any_type,
                      call_sym, invoke_sym, goto_ifnot_sym, return_sym, jl_symbol("tuple"),
                      unreachable_sym, jl_an_empty_string,
@@ -1655,7 +1655,7 @@ static void jl_init_serializer2(int for_serialize)
                      jl_methtable_type->name, jl_typemap_level_type->name, jl_typemap_entry_type->name, jl_tvar_type->name,
                      ((jl_datatype_t*)jl_unwrap_unionall((jl_value_t*)jl_abstractarray_type))->name,
                      ((jl_datatype_t*)jl_unwrap_unionall((jl_value_t*)jl_densearray_type))->name,
-                     jl_vararg_typename, jl_void_type->name, jl_method_instance_type->name, jl_method_type->name, jl_lambda_type->name,
+                     jl_vararg_typename, jl_void_type->name, jl_method_instance_type->name, jl_method_type->name, jl_nativecode_type->name,
                      jl_module_type->name, jl_function_type->name, jl_typedslot_type->name,
                      jl_abstractslot_type->name, jl_slotnumber_type->name,
                      jl_unionall_type->name, jl_intrinsic_type->name, jl_task_type->name,

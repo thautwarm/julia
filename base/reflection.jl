@@ -903,7 +903,7 @@ uncompressed_ast(m::Method) = isdefined(m, :source) ? _uncompressed_ast(m, m.sou
                               error("Code for this Method is not available.")
 _uncompressed_ast(m::Method, s::CodeInfo) = copy(s)
 _uncompressed_ast(m::Method, s::Array{UInt8,1}) = ccall(:jl_uncompress_ast, Any, (Any, Ptr{Cvoid}, Any), m, C_NULL, s)::CodeInfo
-_uncompressed_ast(m::Core.Lambda, s::Array{UInt8,1}) = ccall(:jl_uncompress_ast, Any, (Any, Ptr{Cvoid}, Any), li.def.def::Method, li, s)::CodeInfo
+_uncompressed_ast(m::Core.NativeCode, s::Array{UInt8,1}) = ccall(:jl_uncompress_ast, Any, (Any, Ptr{Cvoid}, Any), li.def.def::Method, li, s)::CodeInfo
 
 function method_instances(@nospecialize(f), @nospecialize(t), world::UInt = typemax(UInt))
     tt = signature_type(f, t)
@@ -1309,8 +1309,8 @@ has_bottom_parameter(t::Union) = has_bottom_parameter(t.a) & has_bottom_paramete
 has_bottom_parameter(t::TypeVar) = t.ub == Bottom || has_bottom_parameter(t.ub)
 has_bottom_parameter(::Any) = false
 
-min_world(m::Core.Lambda) = reinterpret(UInt, m.min_world)
-max_world(m::Core.Lambda) = reinterpret(UInt, m.max_world)
+min_world(m::Core.NativeCode) = reinterpret(UInt, m.min_world)
+max_world(m::Core.NativeCode) = reinterpret(UInt, m.max_world)
 min_world(m::Core.CodeInfo) = reinterpret(UInt, m.min_world)
 max_world(m::Core.CodeInfo) = reinterpret(UInt, m.max_world)
 get_world_counter() = ccall(:jl_get_world_counter, UInt, ())

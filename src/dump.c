@@ -850,19 +850,19 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
     }
     else if (jl_is_nativecode(v)) {
         write_uint8(s->s, TAG_NATIVECODE);
-        jl_nativecode_t *ncode = (jl_nativecode_t*)v;
+        jl_code_instance_t *codeinst = (jl_code_instance_t*)v;
         int validate = 0;
-        if (ncode->max_world == ~(size_t)0)
+        if (codeinst->max_world == ~(size_t)0)
             validate = 1; // can check on deserialize if this cache entry is still valid
         int flags = validate << 0;
-        if (ncode->invoke == jl_fptr_const_return)
+        if (codeinst->invoke == jl_fptr_const_return)
             flags |= 1 << 2;
         write_uint8(s->s, flags);
-        jl_serialize_value(s, (jl_value_t*)ncode->def);
-        if (validate || ncode->min_world == 0) {
-            jl_serialize_value(s, ncode->inferred);
-            jl_serialize_value(s, ncode->rettype_const);
-            jl_serialize_value(s, ncode->rettype);
+        jl_serialize_value(s, (jl_value_t*)codeinst->def);
+        if (validate || codeinst->min_world == 0) {
+            jl_serialize_value(s, codeinst->inferred);
+            jl_serialize_value(s, codeinst->rettype_const);
+            jl_serialize_value(s, codeinst->rettype);
         }
         else {
             // skip storing useless data
@@ -870,7 +870,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
             jl_serialize_value(s, NULL);
             jl_serialize_value(s, jl_any_type);
         }
-        jl_serialize_value(s, ncode->next);
+        jl_serialize_value(s, codeinst->next);
     }
     else if (jl_typeis(v, jl_module_type)) {
         jl_serialize_module(s, (jl_module_t*)v);
@@ -1730,30 +1730,30 @@ static jl_value_t *jl_deserialize_value_method_instance(jl_serializer_state *s, 
 static jl_value_t *jl_deserialize_value_nativecode(jl_serializer_state *s, jl_value_t **loc) JL_GC_DISABLED
 {
     int usetable = (s->mode != MODE_IR);
-    jl_nativecode_t *ncode =
-        (jl_nativecode_t*)jl_gc_alloc(s->ptls, sizeof(jl_nativecode_t), jl_nativecode_type);
-    memset(ncode, 0, sizeof(jl_nativecode_t));
+    jl_code_instance_t *codeinst =
+        (jl_code_instance_t*)jl_gc_alloc(s->ptls, sizeof(jl_code_instance_t), jl_nativecode_type);
+    memset(codeinst, 0, sizeof(jl_code_instance_t));
     if (usetable)
-        arraylist_push(&backref_list, ncode);
+        arraylist_push(&backref_list, codeinst);
     int flags = read_uint8(s->s);
     int validate = (flags >> 0) & 3;
     int constret = (flags >> 2) & 1;
-    ncode->def = (jl_method_instance_t*)jl_deserialize_value(s, (jl_value_t**)&ncode->def);
-    jl_gc_wb(ncode, ncode->def);
-    ncode->inferred = jl_deserialize_value(s, &ncode->inferred);
-    jl_gc_wb(ncode, ncode->inferred);
-    ncode->rettype_const = jl_deserialize_value(s, &ncode->rettype_const);
-    if (ncode->rettype_const)
-        jl_gc_wb(ncode, ncode->rettype_const);
-    ncode->rettype = jl_deserialize_value(s, &ncode->rettype);
-    jl_gc_wb(ncode, ncode->rettype);
+    codeinst->def = (jl_method_instance_t*)jl_deserialize_value(s, (jl_value_t**)&codeinst->def);
+    jl_gc_wb(codeinst, codeinst->def);
+    codeinst->inferred = jl_deserialize_value(s, &codeinst->inferred);
+    jl_gc_wb(codeinst, codeinst->inferred);
+    codeinst->rettype_const = jl_deserialize_value(s, &codeinst->rettype_const);
+    if (codeinst->rettype_const)
+        jl_gc_wb(codeinst, codeinst->rettype_const);
+    codeinst->rettype = jl_deserialize_value(s, &codeinst->rettype);
+    jl_gc_wb(codeinst, codeinst->rettype);
     if (constret)
-        ncode->invoke = jl_fptr_const_return;
-    ncode->next = (jl_nativecode_t*)jl_deserialize_value(s, (jl_value_t**)&ncode->next);
-    jl_gc_wb(ncode, ncode->next);
+        codeinst->invoke = jl_fptr_const_return;
+    codeinst->next = (jl_code_instance_t*)jl_deserialize_value(s, (jl_value_t**)&codeinst->next);
+    jl_gc_wb(codeinst, codeinst->next);
     if (validate)
-        ncode->min_world = jl_world_counter;
-    return (jl_value_t*)ncode;
+        codeinst->min_world = jl_world_counter;
+    return (jl_value_t*)codeinst;
 }
 
 static jl_value_t *jl_deserialize_value_module(jl_serializer_state *s) JL_GC_DISABLED
@@ -2248,11 +2248,11 @@ static void jl_insert_backedges(jl_array_t *list, arraylist_t *dependent_worlds)
                 }
             }
             // then enable it
-            jl_nativecode_t *ncode = caller->cache;
-            while (ncode) {
-                if (ncode->min_world > 0)
-                    ncode->max_world = ~(size_t)0;
-                ncode = ncode->next;
+            jl_code_instance_t *codeinst = caller->cache;
+            while (codeinst) {
+                if (codeinst->min_world > 0)
+                    codeinst->max_world = ~(size_t)0;
+                codeinst = codeinst->next;
             }
         }
         else {
@@ -2525,7 +2525,7 @@ JL_DLLEXPORT jl_array_t *jl_compress_ast(jl_method_t *m, jl_code_info_t *code)
     return v;
 }
 
-JL_DLLEXPORT jl_code_info_t *jl_uncompress_ast(jl_method_t *m, jl_nativecode_t *metadata, jl_array_t *data)
+JL_DLLEXPORT jl_code_info_t *jl_uncompress_ast(jl_method_t *m, jl_code_instance_t *metadata, jl_array_t *data)
 {
     if (jl_is_code_info(data))
         return (jl_code_info_t*)data;

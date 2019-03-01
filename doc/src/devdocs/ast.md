@@ -545,9 +545,9 @@ for important details on how to modify these fields safely.
 
   * `cache`
 
-    Cache of `NativeCode` objects that share this template instantiation.
+    Cache of `CodeInstance` objects that share this template instantiation.
 
-### MethodInstance
+### CodeInstance
 
   * `def`
 

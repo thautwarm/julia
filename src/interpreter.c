@@ -856,9 +856,9 @@ SECT_INTERP CALLBACK_ABI void *jl_interpret_call_callback(interpreter_state *s, 
     return (void*)r;
 }
 
-SECT_INTERP jl_value_t *jl_fptr_interpret_call(jl_nativecode_t *ncode, jl_value_t **args, uint32_t nargs)
+SECT_INTERP jl_value_t *jl_fptr_interpret_call(jl_code_instance_t *codeinst, jl_value_t **args, uint32_t nargs)
 {
-    struct jl_interpret_call_args callback_args = { ncode->def, args, nargs };
+    struct jl_interpret_call_args callback_args = { codeinst->def, args, nargs };
     return (jl_value_t*)enter_interpreter_frame(jl_interpret_call_callback, (void *)&callback_args);
 }
 

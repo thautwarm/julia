@@ -116,7 +116,7 @@ function add_backedge!(li::MethodInstance, caller::OptimizationState)
     nothing
 end
 
-function add_backedge!(li::NativeCode, caller::OptimizationState)
+function add_backedge!(li::CodeInstance, caller::OptimizationState)
     update_valid_age!(min_world(li), max_world(li), caller)
     add_backedge!(li.def, caller)
     nothing

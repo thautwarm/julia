@@ -2133,7 +2133,7 @@ void jl_init_types(void) JL_GC_DISABLED
                         0, 1, 3);
 
     jl_nativecode_type =
-        jl_new_datatype(jl_symbol("NativeCode"), core,
+        jl_new_datatype(jl_symbol("CodeInstance"), core,
                         jl_any_type, jl_emptysvec,
                         jl_perm_symsvec(12,
                             "def",

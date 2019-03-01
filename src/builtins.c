@@ -1256,7 +1256,7 @@ void jl_init_primitives(void) JL_GC_DISABLED
     add_builtin("Module", (jl_value_t*)jl_module_type);
     add_builtin("MethodTable", (jl_value_t*)jl_methtable_type);
     add_builtin("Method", (jl_value_t*)jl_method_type);
-    add_builtin("NativeCode", (jl_value_t*)jl_nativecode_type);
+    add_builtin("CodeInstance", (jl_value_t*)jl_nativecode_type);
     add_builtin("TypeMapEntry", (jl_value_t*)jl_typemap_entry_type);
     add_builtin("TypeMapLevel", (jl_value_t*)jl_typemap_level_type);
     add_builtin("Symbol", (jl_value_t*)jl_sym_type);

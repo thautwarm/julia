@@ -674,8 +674,8 @@ static void jl_write_values(jl_serializer_state *s)
                 write_padding(s->s, sizeof(jl_method_t) - tot);
             }
             else if (jl_is_nativecode(v)) {
-                jl_nativecode_t *m = (jl_nativecode_t*)v;
-                jl_nativecode_t *newm = (jl_nativecode_t*)&s->s->buf[reloc_offset];
+                jl_code_instance_t *m = (jl_code_instance_t*)v;
+                jl_code_instance_t *newm = (jl_code_instance_t*)&s->s->buf[reloc_offset];
 
                 newm->invoke = NULL;
                 newm->specptr.fptr = NULL;
@@ -728,11 +728,11 @@ static void jl_write_values(jl_serializer_state *s)
                 }
                 newm->invoke = NULL; // relocation offset
                 if (fptr_id != JL_API_NULL) {
-                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_nativecode_t, invoke))); // relocation location
+                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_code_instance_t, invoke))); // relocation location
                     arraylist_push(&s->relocs_list, (void*)(((uintptr_t)FunctionRef << RELOC_TAG_OFFSET) + fptr_id)); // relocation target
                 }
                 if (specfptr_id >= 2) {
-                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_nativecode_t, specptr.fptr))); // relocation location
+                    arraylist_push(&s->relocs_list, (void*)(reloc_offset + offsetof(jl_code_instance_t, specptr.fptr))); // relocation location
                     arraylist_push(&s->relocs_list, (void*)(((uintptr_t)BuiltinFunctionRef << RELOC_TAG_OFFSET) + specfptr_id - 2)); // relocation target
                 }
             }
@@ -1025,11 +1025,11 @@ static void jl_update_all_fptrs(jl_serializer_state *s)
                 specfunc = 0;
                 offset = ~offset;
             }
-            jl_nativecode_t *ncode = (jl_nativecode_t*)(base + offset);
+            jl_code_instance_t *codeinst = (jl_code_instance_t*)(base + offset);
             uintptr_t base = (uintptr_t)fvars.base;
-            assert(jl_is_method(ncode->def->def.method) && ncode->invoke != jl_fptr_const_return);
-            assert(specfunc ? ncode->invoke != NULL : ncode->invoke == NULL);
-            linfos[i] = ncode->def;
+            assert(jl_is_method(codeinst->def->def.method) && codeinst->invoke != jl_fptr_const_return);
+            assert(specfunc ? codeinst->invoke != NULL : codeinst->invoke == NULL);
+            linfos[i] = codeinst->def;
             int32_t offset = fvars.offsets[i];
             for (; clone_idx < fvars.nclones; clone_idx++) {
                 uint32_t idx = fvars.clone_idxs[clone_idx] & jl_sysimg_val_mask;
@@ -1041,10 +1041,10 @@ static void jl_update_all_fptrs(jl_serializer_state *s)
             }
             void *fptr = (void*)(base + offset);
             if (specfunc)
-                ncode->specptr.fptr = fptr;
+                codeinst->specptr.fptr = fptr;
             else
-                ncode->invoke = (jl_callptr_t)fptr;
-            jl_fptr_to_llvm(fptr, ncode, specfunc);
+                codeinst->invoke = (jl_callptr_t)fptr;
+            jl_fptr_to_llvm(fptr, codeinst, specfunc);
         }
     }
     jl_register_fptrs(sysimage_base, &fvars, linfos, sysimg_fvars_max);

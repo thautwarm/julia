@@ -259,7 +259,7 @@ static void _compile_all_deq(jl_array_t *found)
             continue;
         mi = jl_get_unspecialized(mi);
         assert(mi == m->unspecialized); // make sure we didn't get tricked by a generated function, since we can't handle those
-        jl_nativecode_t *ucache = jl_get_method_inferred(mi, (jl_value_t*)jl_any_type, 1, ~(size_t)0);
+        jl_code_instance_t *ucache = jl_get_method_inferred(mi, (jl_value_t*)jl_any_type, 1, ~(size_t)0);
         if (ucache->invoke != NULL)
             continue;
         src = m->source;
@@ -329,16 +329,16 @@ static int precompile_enq_specialization_(jl_typemap_entry_t *l, void *closure)
 {
     jl_method_instance_t *mi = l->func.linfo;
     assert(jl_is_method_instance(mi));
-    jl_nativecode_t *ncode = mi->cache;
-    while (ncode) {
+    jl_code_instance_t *codeinst = mi->cache;
+    while (codeinst) {
         int do_compile = 0;
-        if (ncode->functionObjectsDecls.functionObject == NULL && ncode->invoke != jl_fptr_const_return) {
-            if (ncode->inferred && ncode->inferred != jl_nothing &&
-                jl_ast_flag_inferred((jl_array_t*)ncode->inferred) &&
-                !jl_ast_flag_inlineable((jl_array_t*)ncode->inferred)) {
+        if (codeinst->functionObjectsDecls.functionObject == NULL && codeinst->invoke != jl_fptr_const_return) {
+            if (codeinst->inferred && codeinst->inferred != jl_nothing &&
+                jl_ast_flag_inferred((jl_array_t*)codeinst->inferred) &&
+                !jl_ast_flag_inlineable((jl_array_t*)codeinst->inferred)) {
                 do_compile = 1;
             }
-            else if (ncode->invoke != NULL) {
+            else if (codeinst->invoke != NULL) {
                 do_compile = 1;
             }
         }
@@ -346,7 +346,7 @@ static int precompile_enq_specialization_(jl_typemap_entry_t *l, void *closure)
             jl_array_ptr_1d_push((jl_array_t*)closure, (jl_value_t*)mi);
             return 1;
         }
-        ncode = ncode->next;
+        codeinst = codeinst->next;
     }
     return 1;
 }
